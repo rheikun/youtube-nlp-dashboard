@@ -3,19 +3,22 @@ import pickle
 import pandas as pd
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from collections import Counter
+from sklearn.feature_extraction.text import TfidfVectorizer
 import seaborn as sns
 
 # Load dataset
-df = pd.read_csv('./data/predicted_sentiment.csv') 
+df = pd.read_csv('./data/predicted_sentiment.csv')
 
-# Load the feature extractor and models
-feature_bow = pickle.load(open("./model/feature-bow.p", 'rb'))
-model_nb = pickle.load(open('./model/model-nb.p', 'rb'))
-model_nn = pickle.load(open('./model/model-nn.p', 'rb'))
+# Load the models
+nb_model = pickle.load(open('./model/nb.pkl', 'rb'))
+nb_balanced_model = pickle.load(open('./model/nb_balanced.pkl', 'rb'))
+
+# Read stop words from CSV without header
+stopwords_df = pd.read_csv('./data/stopwords.csv', header=None, names=['stopword'])
+list_stopwords = stopwords_df['stopword'].tolist()
 
 # Sidebar menu for navigation
 menu = st.sidebar.selectbox('Select an Option', ['Sentiment Analysis', 'Analysis Overview'])
@@ -23,8 +26,7 @@ menu = st.sidebar.selectbox('Select an Option', ['Sentiment Analysis', 'Analysis
 # Function to predict sentiment using the chosen model
 def predict_sentiment(text, model):
     if text:
-        transformed_text = feature_bow.transform([text])  # Convert the input text to BoW features
-        prediction = model.predict(transformed_text)
+        prediction = model.predict([text])  # Directly using the text as input since it's already vectorized
         return prediction[0]
     return None
 
@@ -37,11 +39,11 @@ if menu == 'Sentiment Analysis':
     user_input = st.text_area("Enter a comment for analysis:")
 
     # Choose the model for sentiment analysis
-    model_choice = st.selectbox('Choose Model', ['Naive Bayes', 'Neural Network'])
+    model_choice = st.selectbox('Choose Model', ['Naive Bayes', 'Naive Bayes (Balanced)'])
 
     if st.button('Submit'):
         if user_input:
-            selected_model = model_nb if model_choice == 'Naive Bayes' else model_nn
+            selected_model = nb_model if model_choice == 'Naive Bayes (Balanced)' else nb_balanced_model
             predicted_sentiment = predict_sentiment(user_input, selected_model)
 
             # Display the prediction
@@ -52,37 +54,25 @@ elif menu == 'Analysis Overview':
     # Clustering Analysis section
     st.title('Analysis Overview of YouTube Comments')
 
-    # Membaca stop words dari file CSV tanpa header
-    stopwords_df = pd.read_csv('./data/stopwords.csv', header=None, names=['stopword'])
-
-    # Mengonversi kolom stopword menjadi daftar
-    list_stopwords = stopwords_df['stopword'].tolist()
-
-    # Menggunakan list_stopwords dalam TfidfVectorizer
-    vectorizer = TfidfVectorizer(stop_words=list_stopwords)
-
-    # Fit dan transformasi kolom 'cleaned_comment'
-    X = vectorizer.fit_transform(df['cleaned_comment'])
-
     # Word Cloud Visualization
     st.subheader('Word Cloud of Comments')
 
     # Combine all comments into a single string
-    all_comments = ' '.join(df['cleaned_comment'])  
+    all_comments = ' '.join(df['cleaned_comment'])
 
     # Generate the word cloud
     wordcloud = WordCloud(width=800, height=400,
-                        background_color='white',
-                        stopwords=list_stopwords,
-                        colormap='viridis',
-                        random_state=42).generate(all_comments)
+                          background_color='white',
+                          stopwords=list_stopwords,
+                          colormap='viridis',
+                          random_state=42).generate(all_comments)
 
     plt.figure(figsize=(10, 5))
     plt.imshow(wordcloud, interpolation='bilinear')
     plt.axis('off')
     st.pyplot(plt)
 
-    # Top Words by Sentiment 
+    # Top Words by Sentiment
     st.subheader('Top Words by Sentiment')
 
     def get_top_n_words(dataframe, n=10):
@@ -94,7 +84,7 @@ elif menu == 'Analysis Overview':
         return word_count.most_common(n)
 
     # Filter comments by sentiment
-    positive_comments = df[df['predicted_sentiment'] == 'positive'] 
+    positive_comments = df[df['predicted_sentiment'] == 'positive']
     negative_comments = df[df['predicted_sentiment'] == 'negative']
     neutral_comments = df[df['predicted_sentiment'] == 'neutral']
 
@@ -128,14 +118,20 @@ elif menu == 'Analysis Overview':
     # Clustering Visualization
     st.subheader('Clustering Visualization')
 
-    # Assuming you've already performed KMeans clustering
+    # Transform the cleaned comments using TfidfVectorizer
+    vectorizer = TfidfVectorizer(stop_words=list_stopwords)
+    X = vectorizer.fit_transform(df['cleaned_comment'])
+
+    # KMeans clustering
     kmeans = KMeans(n_clusters=16, random_state=42)  # Adjust the number of clusters as needed
     kmeans.fit(X)
-    
+
+    # Reduce dimensionality for visualization using PCA
     pca = PCA(n_components=2)
-    X_reduced = pca.fit_transform(X.toarray()) 
+    X_reduced = pca.fit_transform(X.toarray())
     df['cluster'] = kmeans.labels_
 
+    # Clustering Visualization
     plt.figure(figsize=(10, 6))
     sns.scatterplot(x=X_reduced[:, 0], y=X_reduced[:, 1], hue=df['cluster'], palette='viridis', alpha=0.7)
     plt.title('Clustering of YouTube Comments')
